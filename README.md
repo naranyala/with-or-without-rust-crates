@@ -895,6 +895,221 @@ Using `serde` and `serde_json` for JSON handling is idiomatic and standard. This
 
 Pulling in a huge framework for a tiny internal utility when a few lines of `std` code solve it more directly.
 
+### Crate anti-patterns: when a dependency is easy to add and hard to live with
+
+Not every crate is a good choice just because it is popular, ergonomic, or well-documented. Some crates are excellent tools in the right place and terrible decisions in the wrong project.
+
+This section is about the misleading cases: the dependencies that look like a shortcut, but quietly create complexity, abstraction, compile-time cost, and future maintenance pain.
+
+#### The trap: "It saves a few lines"
+
+A crate is not automatically a win just because it reduces boilerplate.
+
+Typical examples:
+
+- adding `tokio` to a CLI that is mostly synchronous and short-lived
+- pulling in `clap` for a tiny script with three flags
+- using `anyhow` in a public library where error types should remain explicit
+- bringing in `serde` for a config format that is a few fixed key/value pairs
+- adding a web framework to an internal tool with a single endpoint
+
+The right question is not:
+
+- "Can I use this crate?"
+
+The more important question is:
+
+- "Does this crate improve the design, or just hide the design?"
+
+#### Misleading ergonomics
+
+Some crates are ergonomic in the short term but create confusing long-term behavior.
+
+Examples:
+
+- `anyhow` is great for application code, but in library APIs it often erodes type precision and pushes error semantics outward.
+- `tokio` is excellent for async I/O, but it is often used as a default even when a simple thread or synchronous pipeline would be clearer.
+- `serde` is wonderful for structured data, but it is not always the right answer for small, controlled, human-written formats.
+- `clap` is great for real CLIs, but a tiny internal utility should not import a large argument parsing framework just to parse two flags.
+- `axum` or `actix-web` are strong choices for web services, but not for a small tool that merely reads input and sends a response once.
+
+A crate can be ergonomic without being appropriate.
+
+#### Red flags for a bad dependency choice
+
+Be careful when a crate:
+
+- solves a problem you barely need
+- pulls in a large transitive graph for a small task
+- requires learning a framework just to do one small job
+- hides behavior behind macros or implicit conventions
+- makes the code harder to understand than the problem itself
+- becomes the dominant abstraction in the project
+- is overkill for your team's level of experience
+- is hard to replace later without rewriting the integration
+
+If a dependency makes the code "less explicit" without providing real leverage, it is probably a bad trade.
+
+#### Common wrong-usage patterns
+
+##### 1. Using a framework for a tiny problem
+
+This is one of the most common mistakes.
+
+Example:
+
+- a small internal utility is built with `axum` instead of a compact `TcpListener` or simple CLI flow
+- a tiny script uses a full application framework to parse a couple of arguments and write a file
+
+Why it is wrong:
+
+- more dependencies
+- more compile time
+- more ceremony
+- harder onboarding
+- less obvious control flow
+
+##### 2. Using async everywhere
+
+Async is great when the workload is genuinely concurrent or I/O-bound.
+
+It is not a universal default.
+
+Wrong usage:
+
+- using `tokio` in a short-lived, single-threaded CLI
+- using `async` for code that is mostly CPU-bound or simple data transforms
+- adding async runtime complexity before measuring whether it is actually needed
+
+A good rule:
+
+- if the program is short, direct, and mostly sequential, do not force async into the design.
+
+##### 3. Using `anyhow` or `eyre` too early
+
+These crates are excellent for tool and application-level code.
+
+They are often the wrong choice in:
+
+- library APIs
+- domain models
+- reusable abstractions
+- code that should expose precise failure modes
+
+Wrong pattern:
+
+- every function returns `anyhow::Result<T>`
+- error semantics are flattened into a generic message
+- the caller cannot distinguish business errors from infrastructure errors
+
+This creates flexibility at the cost of correctness.
+
+##### 4. Using a “full-featured” crate for a simple format
+
+A crate is often justified for:
+
+- JSON payloads
+- real config files
+- networks and HTTP
+- complex parsing
+
+But not every format deserves a full serialization stack.
+
+Wrong pattern:
+
+- reading a small config file with `serde` and a massive struct graph when a few `fs::read_to_string` and `split` calls are enough
+- parsing a single data file with a generic serialization crate when the format is fixed and narrow
+
+The real question is not:
+
+- "Is there a crate for this?"
+
+It is:
+
+- "Is the crate solving a general problem, or just making a tiny format feel more abstract?"
+
+##### 5. Choosing the crate that is most visible, not the crate that is most suitable
+
+Rust has many well-known libraries, but popularity is not a substitute for fit.
+
+Wrong pattern:
+
+- "Everyone uses `X`, so I should too"
+- "This has a million downloads, so it must be the right abstraction"
+- "The crate is famous, therefore the code is good"
+
+Many projects fail because they adopt a famous ecosystem tool without first checking:
+
+- whether it matches the architecture
+- whether it adds needless abstraction
+- whether it imposes concurrency or lifecycle models the project does not need
+
+##### 6. Treating metaprogramming as a feature
+
+Some crates are powerful because they hide a lot of logic in macros or derive attributes.
+
+This can be useful, but it is also a source of confusion.
+
+Wrong pattern:
+
+- relying on generated code you do not understand
+- adding proc-macros because they look magical and concise
+- letting the crate define your design instead of the project defining its needs
+
+Rust is very good at explicitness. A dependency that hides too much logic can easily become a maintenance trap.
+
+#### A better rule of thumb
+
+Use a dependency when it:
+
+- matches the real problem
+- keeps the code clearer, not more abstract
+- has a stable and understandable maintenance story
+- is worth the dependency cost
+- can be replaced or understood by the team
+
+Avoid a dependency when it:
+
+- is more clever than necessary
+- solves a generic problem with a specialized local need
+- adds a large abstraction layer for a small task
+- makes the code harder to reason about
+- encourages “just because it exists” architecture
+
+#### Example of a bad dependency decision
+
+A project has a tiny command-line tool that reads a CSV file, filters some rows, and prints output.
+
+Wrong:
+
+- add `tokio`
+- add `serde`
+- add `clap`
+- add `tracing`
+- add a web framework in the same project "for future expansion"
+
+Why it is wrong:
+
+- the project is not doing async work
+- the data format is simple
+- the lifecycle is tiny
+- the dependency graph becomes larger than the functionality
+
+Better:
+
+- keep it standard library first
+- implement a small parser locally
+- use `std::env` and plain `fs`
+- make the design explicit and transparent
+
+#### Final principle
+
+The most dangerous crate is not the broken crate.
+It is the crate that is technically working, widely used, and still a poor fit.
+
+The best Rust code is not the one with the most dependencies.
+It is the one with the smallest honest abstraction that matches the job.
+
 ---
 
 ## 14. Performance and compile-time reality
@@ -1016,8 +1231,8 @@ Recommended approach:
 
 - `no_std`
 - `embedded-hal`
-- heapless containers
-- target-specific abstraction crates
+- `heapless` containers
+- target-specific abstractions
 
 ### 16.4 Data-processing pipeline
 
@@ -1127,10 +1342,7 @@ async fn main() {
 fn parse_numbers(input: &str) -> Vec<i32> {
     input
         .split(',')
-        .filter_map(|token| {
-            let trimmed = token.trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.parse::<i32>().unwrap()) }
-        })
+        .filter_map(|token| token.trim().parse().ok())
         .collect()
 }
 ```
@@ -1158,7 +1370,7 @@ pub fn square(x: u32) -> u32 {
 | Dependency management | None | Required |
 | Time to implement | More manual work | Faster |
 | Flexibility | Very high | High but layered |
-| Best use | Small tools, simple logic | Common infrastructure and ecosystems |
+| Best use | Small tools, custom logic | Common infrastructure and APIs |
 
 ### 18.2 `std` vs `no_std`
 
@@ -1166,20 +1378,20 @@ pub fn square(x: u32) -> u32 {
 | --- | --- | --- |
 | Filesystem | Yes | Usually no |
 | Threads | Yes | Usually no |
-| Embedded support | Limited | Strong |
+| Environment assumptions | Yes | Custom runtime required |
 | Binary size | Larger | Smaller |
-| Runtime assumptions | Normal OS environment | Custom environment |
+| Target environment | Normal OS | Embedded or minimal runtime |
 
 ### 18.3 Crate-first vs custom implementation
 
-| Scenario | Prefer crate | Prefer custom implementation |
+| Scenario | Prefer crate | Prefer custom |
 | --- | --- | --- |
-| JSON serialization | Yes | Sometimes not |
+| JSON serialization | Yes | Sometimes |
 | HTTP client | Yes | No |
-| CLI parser | Yes | If extremely tiny |
-| custom config format | Sometimes | Often yes |
-| business logic | Maybe | Often yes |
-| embedded runtime | Sometimes | Often yes |
+| CLI parser | Yes | If very tiny |
+| Custom config format | Sometimes | Often |
+| Business logic | Often local | Frequently |
+| Embedded runtime | Yes, if platform crate exists | Sometimes |
 
 ---
 
@@ -1224,7 +1436,7 @@ pub fn square(x: u32) -> u32 {
 - workspace: multiple Rust crates managed as one project
 - semver: semantic versioning
 - lockfile: `Cargo.lock`, which pins dependency versions
-- transitive dependency: a dependency that is required by another dependency
+- transitive dependency: a dependency required by another dependency
 - async: non-blocking execution model
 
 ---
@@ -1254,7 +1466,7 @@ Use crates for:
 - common infrastructure
 - networked systems
 - serialization
-- async runtime
+- async runtimes
 - APIs
 - logging and error handling
 
@@ -1328,7 +1540,7 @@ Why they matter:
 - they replace brittle hand-written logic
 - they give clearer failure modes
 - they improve maintainability
-- they create better debug visibility in production systems
+- they create better debugging visibility in production systems
 
 ### 22.3 Error handling crates
 
@@ -1338,14 +1550,14 @@ These are among the most valuable and life-saving crates in the ecosystem.
 
 - Intuitive: very clear for typed errors
 - Life-saver: eliminates repetitive error enum boilerplate
-- Best for: libraries and domain errors
+- Best for: libraries and domain error models
 - Why: makes error modeling explicit and clean
 
 #### `anyhow`
 
 - Intuitive: very ergonomic for app-level code
 - Life-saver: removes the burden of writing custom error types everywhere
-- Best for: CLI tools, services, scripts
+- Best for: CLIs, services, scripts
 - Why: perfect for “just propagate errors” code
 
 #### `eyre`
@@ -1373,7 +1585,7 @@ These are among the most valuable and life-saving crates in the ecosystem.
 #### `toml`
 
 - Intuitive: simple config format support
-- Life-saver: avoids brittle key-value parsing code
+- Life-saver: avoids brittle key/value parsing code
 - Best for: app and tool configuration
 
 #### `csv`
@@ -1433,52 +1645,14 @@ These are among the most valuable and life-saving crates in the ecosystem.
 
 - Intuitive: clean route and handler model
 - Life-saver: reduces boilerplate for API services
-- Best for: web APIs and service backends
+- Best for: web APIs and backends
 
-### 22.7 Logging and observability crates
-
-#### `tracing`
-
-- Intuitive: structured and composable
-- Life-saver: makes debugging and monitoring far easier
-- Best for: services, applications, instrumentation
-- Why: spans, scope, structured logging, performance insight
-
-#### `log`
-
-- Intuitive: simple logging façade
-- Life-saver: standard interface across ecosystems
-- Best for: app logging
-
-#### `env_logger`
-
-- Intuitive: simple logger setup
-- Life-saver: quick diagnostics without extra complexity
-- Best for: local dev and quick app logging
-
-### 22.8 Async and concurrency crates
-
-#### `tokio`
-
-- Life-saver for async execution
-- avoids hand-written schedulers and custom concurrency models
-
-#### `futures`
-
-- intuitive composition of async workflows
-- life-saver for managing async task pipelines
-
-#### `async-trait`
-
-- useful but not always intuitive
-- can be a life-saver when traits need async methods
-
-### 22.9 Data and time handling crates
+### 22.7 Data and time handling crates
 
 #### `chrono`
 
 - Intuitive: date/time handling is often painful in raw Rust
-- Life-saver: avoids ad-hoc date logic and timezone confusion
+- Life-saver: avoids ad hoc date logic and timezone confusion
 - Best for: timestamps, scheduling, validation
 
 #### `uuid`
@@ -1493,7 +1667,7 @@ These are among the most valuable and life-saving crates in the ecosystem.
 - Life-saver: avoids manual RNG design
 - Best for: IDs, tests, simulations, probabilistic logic
 
-### 22.10 Database crates
+### 22.8 Database crates
 
 #### `sqlx`
 
@@ -1503,17 +1677,17 @@ These are among the most valuable and life-saving crates in the ecosystem.
 
 #### `diesel`
 
-- Intuitive: strongly typed query building
+- Intuitive: strongly typed query builder
 - Life-saver: makes database interaction safer and more structured
 - Best for: complex relational systems
 
 #### `rusqlite`
 
 - Intuitive: straightforward local SQLite usage
-- Life-saver: eliminates manual DB handling
+- Life-saver: eliminates manual DB handling for local apps
 - Best for: local apps, embedded-ish data stores
 
-### 22.11 Testing and validation crates
+### 22.9 Testing and validation crates
 
 #### `proptest`
 
@@ -1533,119 +1707,23 @@ These are among the most valuable and life-saving crates in the ecosystem.
 - Life-saver: catches unintended output changes
 - Best for: serializer, compiler, CLI output snapshots
 
-#### `mockall`
-
-- Intuitive: workable patterns for testing dependencies
-- Life-saver: enables focused unit tests
-- Best for: service boundaries and interfaces
-
-### 22.12 Embedded and low-level crates
-
-#### `embedded-hal`
-
-- Intuitive: standard abstraction across hardware
-- Life-saver: avoids writing platform-specific code everywhere
-
-#### `heapless`
-
-- Intuitive: fixed-capacity containers
-- Life-saver: avoids heap allocation in constrained environments
-
-#### `nb`
-
-- Intuitive: non-blocking operations model
-- Life-saver: essential for embedded I/O flows
-
-#### `defmt`
-
-- Intuitive: embedded-friendly logging
-- Life-saver: very useful in microcontroller debugging
-
-### 22.13 General ergonomics and developer experience crates
-
-These may not be glamorous, but they are extremely valuable.
+### 22.10 General ergonomics and developer workflow crates
 
 - `anyhow`
 - `thiserror`
 - `clap`
 - `tracing`
 - `serde`
-- `rayon`
+- `tokio`
+- `axum`
 - `itertools`
-- `humantime`
 - `pretty_assertions`
 - `colored`
 - `indicatif`
 
-These are “intuitive” because they make common developer tasks feel natural.
+These are not “core business logic” crates, but they are often the difference between a frustrating engineering workflow and a smooth one.
 
-### 22.14 Crates that reduce footguns
-
-The biggest safety wins in Rust often come from these categories:
-
-- error handling crates
-- serialization crates
-- logging crates
-- time and UUID crates
-- async runtime crates
-- testing/build validation crates
-- config parsing crates
-
-These directly reduce:
-
-- runtime crashes
-- silent parsing bugs
-- hard-to-debug service failures
-- poor observability
-- poor maintainability
-- unsafe assumptions around data and time
-
-### 22.15 What qualifies as “intuitive”?
-
-A crate is “intuitive” when it:
-
-- has a small mental model
-- follows Rust naming and trait conventions
-- makes the common path easy
-- keeps type safety
-- has good docs
-- does not require deep ceremony for common cases
-
-Examples:
-
-- `serde`
-- `clap`
-- `reqwest`
-- `chrono`
-- `uuid`
-- `tracing`
-- `anyhow`
-- `thiserror`
-
-### 22.16 What qualifies as a “life-saver” crate?
-
-A crate is a “life-saver” when it:
-
-- prevents a class of bugs
-- replaces brittle manual code
-- reduces production risk
-- makes debugging easier
-- lowers maintenance burden
-- clarifies failure modes
-
-Examples:
-
-- `thiserror`
-- `anyhow`
-- `tracing`
-- `serde`
-- `sqlx`
-- `tokio`
-- `clap`
-- `proptest`
-- `criterion`
-
-### 22.17 A strong practical shortlist
+### 22.11 A strong practical shortlist
 
 If I had to pick the most important categories of “intuitive and/or life-saver” crates, I’d rank them like this:
 
@@ -1674,18 +1752,18 @@ There is a third class of crates that matters enormously in real Rust work:
 - platform-specific crates
 - highly scoped crates that solve one narrow problem extremely well
 
-These are not always the broad “every project uses them” crates, but they are often essential in the right project context. They are especially useful when you need to work across an OS boundary, target a specific platform, or solve a very narrow technical problem without reimplementing a lot of low-level logic.
+These are not always the broad “every project uses this” crates, but they are often essential in the right context. They are especially useful when you need to work across an OS boundary, target a specific platform, or solve a very narrow technical problem without reimplementing a lot of low-level logic.
 
 A good rule for this category is:
 
 - the problem is narrow but real
-- the crate solves it much more cleanly than custom code
+- the crate solves it much better than custom code
 - the crate is mature and maintained
 - the problem is common enough that reimplementation would be costly or error-prone
 
 ### 23.1 OS and system integration crates
 
-These are classic platform-specific crates that are extremely practical when targeting operating systems or system-level work.
+These are classic platform-specific crates that are extremely practical when targeting operating systems or system-level APIs.
 
 #### `windows`
 
@@ -1695,7 +1773,7 @@ These are classic platform-specific crates that are extremely practical when tar
 
 #### `windows-sys`
 
-- Use when: low-level Windows API bindings
+- Use when: low-level Windows API binding
 - Why: direct and extremely precise access to Windows OS interfaces
 - Benefits: thin layer, low-level control, precise API mapping
 
@@ -1714,7 +1792,7 @@ These are classic platform-specific crates that are extremely practical when tar
 #### `sysinfo`
 
 - Use when: reading system metrics like CPU, memory, disks, processes
-- Why: much easier than building this yourself across platforms
+- Why: much easier than building this across platforms manually
 - Benefits: easy monitoring and admin-tool integration
 
 #### `which`
@@ -1732,8 +1810,8 @@ These are classic platform-specific crates that are extremely practical when tar
 #### `signal-hook`
 
 - Use when: process lifecycle and graceful shutdown handling
-- Why: easier and safer than manually wiring Unix signals
-- Benefits: robust signal handling for long-running apps
+- Why: robust signal support for long-running apps
+- Benefits: safer signal handling for processes and daemons
 
 ### 23.2 File system and tooling crates
 
@@ -1749,12 +1827,12 @@ These are scoped but highly practical for project tooling, scanning, watching, a
 
 - Use when: file discovery using patterns
 - Why: avoids brittle custom matching logic
-- Benefits: neat glob semantics for CLI or file tooling
+- Benefits: near-glob semantics for CLI or file tooling
 
 #### `tempfile`
 
 - Use when: tests, local processing, and sandboxing
-- Why: standardized temp directory and file management
+- Why: standardized temporary directory and file management
 - Benefits: isolated temporary state and test safety
 
 #### `notify`
@@ -1771,7 +1849,7 @@ These are scoped but highly practical for project tooling, scanning, watching, a
 
 ### 23.3 Data parsing and format-specific crates
 
-These are effectively domain-specific but extremely valuable where the data format matters.
+These are extremely useful when the data format matters more than a general abstraction layer.
 
 #### `nom`
 
@@ -1782,66 +1860,60 @@ These are effectively domain-specific but extremely valuable where the data form
 #### `pest`
 
 - Use when: formal grammar parsing
-- Why: parsing grammars is easier with a generator than by hand
+- Why: parser generators are easier than hand-writing grammar logic
 - Benefits: grammar-first parsing model
 
 #### `lalrpop`
 
-- Use when: complex grammar-based languages or parsing problems
+- Use when: complex grammar-based language parsing
 - Why: good for language-like syntax or domain-specific parsers
 - Benefits: parser generation for LR grammars
 
 #### `csv`
 
 - Use when: tabular data imports or exports
-- Why: handling CSV manually is tedious and error-prone
+- Why: manual CSV handling is tedious and error-prone
 - Benefits: well-defined parsing and serialization support
 
 #### `serde_yaml`
 
-- Use when: YAML configuration or transport
-- Why: YAML is common in config-heavy systems
-- Benefits: integrates with `serde` ecosystem
+- Use when: YAML configuration or transport is required
+- Why: integrates with the `serde` ecosystem
+- Benefits: YAML support with `serde` data models
 
 #### `quick-xml`
 
-- Use when: XML-heavy inputs or outputs
-- Why: robust and efficient XML parsing
-- Benefits: better than ad hoc XML parsing logic
-
-#### `url`
-
-- Use when: networking, API routing, web tooling
-- Why: robust URL parsing and normalization matter
-- Benefits: safer and cleaner than hand-rolled URL handling
+- Use when: XML-heavy inputs or outputs need parsing
+- Why: XML handling by hand is brittle and tedious
+- Benefits: efficient XML parsing for structured inputs
 
 ### 23.4 Cryptography and security crates
 
-These are highly specialized but extremely important in the correct contexts.
+These are highly specialized but critical in the correct contexts.
 
 #### `ring`
 
 - Use when: TLS, signing, hashing, or secure primitives are required
 - Why: trusted, security-focused implementation
-- Benefits: good for serious cryptographic work
+- Benefits: good for modern cryptographic work
 
 #### `sha2`
 
 - Use when: hashing or content integrity checks are needed
-- Why: a standard, explicit, reliable hashing choice
-- Benefits: strong and simple API
+- Why: standard, explicit hashing API
+- Benefits: strong and simple hashing support
 
 #### `blake3`
 
 - Use when: very fast hashing is needed
-- Why: high throughput for hashing-heavy workloads
+- Why: high-throughput hashing for performance-sensitive workloads
 - Benefits: excellent performance characteristics
 
 #### `aes-gcm`
 
 - Use when: encrypting data with symmetric encryption
 - Why: modern encryption pattern for payload-level security
-- Benefits: standard and practical for many apps
+- Benefits: standard and widely used encryption API
 
 #### `argon2`
 
@@ -1852,7 +1924,7 @@ These are highly specialized but extremely important in the correct contexts.
 #### `ed25519-dalek`
 
 - Use when: signing or identity primitives are needed
-- Why: strong and modern signature scheme
+- Why: modern signature scheme with strong support
 - Benefits: well-supported for modern key systems
 
 ### 23.5 GUI and desktop application crates
@@ -1869,7 +1941,7 @@ These are very scoped to app development, but powerful when that is the target d
 
 - Use when: cross-platform desktop app UI is required
 - Why: strong Rust-native UI framework
-- Benefits: good for richer app UIs
+- Benefits: good for richer app UI work
 
 #### `tauri`
 
@@ -1877,117 +1949,111 @@ These are very scoped to app development, but powerful when that is the target d
 - Why: strong hybrid app approach
 - Benefits: Rust backend + web frontend
 
-#### `dioxus`
-
-- Use when: cross-platform UI needs are strong
-- Why: supports desktop, web, and mobile patterns
-- Benefits: versatile app developer experience
-
 #### `slint`
 
-- Use when: polished UI application development matters
-- Why: declarative UI and high-quality app design
-- Benefits: good for product-quality interfaces
+- Use when: polished UI applications need declarative design
+- Why: fine-grained UI development with Rust semantics
+- Benefits: good for high-quality application interfaces
 
 ### 23.6 Browser and WebAssembly crates
 
-These are highly platform-scoped but essential in the web/WASM world.
+These are highly relevant in the web/wasm world.
 
 #### `wasm-bindgen`
 
 - Use when: Rust interacts with JavaScript in browsers or WASM apps
 - Why: necessary for browser interop
-- Benefits: bridge between Rust and the JS runtime
+- Benefits: bridges between Rust and JS runtime
 
 #### `web-sys`
 
 - Use when: browser APIs are required from Rust
-- Why: direct binding to browser functionality
-- Benefits: works well with wasm-bindgen
+- Why: direct browser functionality mapping
+- Benefits: works with wasm-bindgen ecosystem
 
 #### `js-sys`
 
-- Use when: JavaScript interop primitives are required
-- Why: low-level JS interop support
-- Benefits: compatibility with browser APIs and JS functions
+- Use when: JS interop primitives are required
+- Why: low-level JS support for browser APIs
+- Benefits: compatibility with browser functions and JS runtime
 
 #### `gloo`
 
 - Use when: browser-side Rust apps need convenience utilities
 - Why: simplifies common browser tasks
-- Benefits: a practical WASM helper layer
+- Benefits: helpful WASM helper layer
 
 #### `console_error_panic_hook`
 
 - Use when: browser debugging is required
-- Why: makes panics in the browser much more visible
+- Why: makes panic visibility better in the browser
 - Benefits: significantly better debugging experience in WASM
 
 ### 23.7 Embedded and hardware crates
 
-These are crucial when targeting resource-constrained environments.
+These are crucial when targeting microcontrollers and hardware-driven environments.
 
 #### `embedded-hal`
 
 - Use when: microcontrollers and hardware drivers are involved
-- Why: standard abstraction for hardware interaction
+- Why: standard abstraction across hardware
 - Benefits: portable hardware code across different MCUs
 
 #### `heapless`
 
 - Use when: no heap or constrained memory is available
-- Why: fixed-capacity data structures avoid heap issues
-- Benefits: safer and more predictable in embedded applications
+- Why: fixed-capacity containers avoid heap issues
+- Benefits: safer in embedded applications
+
+#### `nb`
+
+- Use when: non-blocking operations model is required
+- Why: essential for embedded I/O flow
+- Benefits: resource-efficient operation in constrained environments
 
 #### `defmt`
 
-- Use when: target device logging is required
-- Why: low-overhead debug logging for embedded work
-- Benefits: extremely practical in microcontroller debugging
+- Use when: embedded device logging is required
+- Why: optimized for microcontroller debugging
+- Benefits: extremely practical in embedded work
 
 #### `cortex-m`
 
-- Use when: ARM Cortex-M targets are used
-- Why: standard support for embedded ARM systems
-- Benefits: direct support for the CPU architecture
+- Use when: ARM Cortex-M targets are in use
+- Why: direct support for the target architecture
+- Benefits: hardware and runtime support for embedded ARM systems
 
-#### `esp-idf-hal`
+### 23.8 Terminal and UI crates
 
-- Use when: ESP32/ESP8266 development is required
-- Why: direct support for common embedded boards
-- Benefits: simplifies hardware control for ESP targets
-
-### 23.8 Terminal and UX crates
-
-These are very useful for command-line tools and terminal apps.
+These are very useful for command-line tools and developer utilities.
 
 #### `colored`
 
 - Use when: terminal output needs color and readability
 - Why: improves CLI UX without much complexity
-- Benefits: clean visual output for developer tools
+- Benefits: cleaner user-facing output
 
 #### `indicatif`
 
 - Use when: long-running CLI jobs need progress bars
-- Why: huge quality-of-life improvement for CLI tools
-- Benefits: user-friendly status output and progress visibility
+- Why: high-quality progress UI for developer tools
+- Benefits: user-friendly status output
 
 #### `termion`
 
-- Use when: interactive terminal or raw terminal control is required
-- Why: useful for terminal applications and TUI tooling
-- Benefits: low-level terminal interaction
+- Use when: interactive terminal control is required
+- Why: useful for raw terminal manipulation
+- Benefits: low-level terminal interaction for TUI apps
 
 #### `crossterm`
 
-- Use when: cross-platform terminal manipulation is needed
+- Use when: cross-platform terminal manipulation is required
 - Why: widely used in terminal apps and TUI systems
-- Benefits: excellent cross-platform terminal support
+- Benefits: cross-platform terminal support
 
 ### 23.9 Networking and protocol-specific crates
 
-These are critical when the problem is not just HTTP, but a precise transport or protocol domain.
+These are critical when the problem is not just “HTTP”, but a precise transport or protocol domain.
 
 #### `rustls`
 
@@ -1997,25 +2063,25 @@ These are critical when the problem is not just HTTP, but a precise transport or
 
 #### `hyper-rustls`
 
-- Use when: secure HTTP client/server stacks are needed
+- Use when: HTTP stacks need TLS integration
 - Why: integrates TLS into Hyper-based stacks
-- Benefits: better than custom TLS plumbing
+- Benefits: cleaner than custom TLS plumbing
 
 #### `quinn`
 
 - Use when: QUIC networking is desired
 - Why: modern transport protocol support
-- Benefits: efficient and modern network stack
+- Benefits: efficient and modern network protocol handling
 
 #### `tokio-tungstenite`
 
 - Use when: WebSockets are required in async systems
-- Why: good async WebSocket support for real-time communication
+- Why: good async WebSocket support
 - Benefits: clean integration with Tokio
 
 ### 23.10 Performance and parallelism crates
 
-These are narrow but highly useful when performance and concurrency matter.
+These are narrow but very useful when performance and concurrency matter.
 
 #### `rayon`
 
@@ -2027,25 +2093,25 @@ These are narrow but highly useful when performance and concurrency matter.
 
 - Use when: concurrency primitives beyond the standard library are needed
 - Why: better support for channels, locks, and concurrency tools
-- Benefits: valuable for advanced multi-threading patterns
+- Benefits: advanced multi-threaded patterns
 
 #### `smallvec`
 
-- Use when: performance-sensitive code benefits from stack-backed storage
+- Use when: performance-sensitive code benefits from stack-backed small collections
 - Why: reduces heap churn in hot paths
 - Benefits: improves performance for small collections
 
 #### `hashbrown`
 
-- Use when: hash maps matter in highly optimized code
-- Why: performance-oriented hash map implementation
+- Use when: hash map implementations matter in highly optimized code
+- Why: performant hash map implementation
 - Benefits: useful in specialized systems work
 
 #### `ordered-float`
 
-- Use when: float ordering is needed without NaN surprises
-- Why: makes ordering and comparison safer in data-heavy code
-- Benefits: improves correctness in floating-point-heavy logic
+- Use when: float ordering or comparison needs to be deterministic without NaN surprises
+- Why: avoids subtle float comparison issues
+- Benefits: safer ordering in data-heavy code
 
 ### 23.11 Developer workflow and tooling crates
 
@@ -2058,10 +2124,10 @@ These are less about application logic and more about the engineering workflow.
 - `which`
 - `tempfile`
 - `directories`
-- `indicatif`
 - `colored`
+- `indicatif`
 
-These are not “core business logic” crates, but they are often the difference between a frustrating and a smooth engineering workflow.
+These are not “core business logic” crates, but they are often the difference between a frustrating engineering workflow and a smooth one.
 
 ### 23.12 A good rule for scoped crates
 
@@ -2070,28 +2136,28 @@ A crate in this category is worth it if all of the following are true:
 - the problem is narrow but real
 - the crate solves it much better than custom code
 - the crate is mature and maintained
-- the problem is common enough that building it manually would be expensive or error-prone
+- the problem is common enough that reimplementation would be expensive or error-prone
 
 Examples of good scoped crates:
 
 - `which` for command lookup
 - `directories` for standard user paths
-- `walkdir` for recursive filesystem traversal
+- `walkdir` for recursive file traversal
 - `tempfile` for test isolation
 - `notify` for directory watching
-- `url` for robust parsing
+- `url` for robust URL parsing
 - `sha2` for hashing
-- `nom` for custom parsing
-- `egui` for GUI work
-- `wasm-bindgen` for browser integration
+- `egui` for UI work
+- `wasm-bindgen` for browser interop
+- `embedded-hal` for hardware abstraction
 
 Examples where a scoped crate is not worth it:
 
 - a small custom CLI parser with just a few flags
 - a one-off JSON file with a fixed schema
-- simple config files with a few fields
-- tiny app logic with no OS or platform integration
-- custom algorithms that do not match a well-established crate pattern
+- simple config files with only a handful of fields
+- tiny app logic that does not need OS or platform integration
+- custom algorithms that do not match an established crate pattern
 
 ### 23.13 Summary
 
@@ -2099,7 +2165,7 @@ Broader “life-saver” crates improve almost every Rust project.
 
 Scoped or platform-specific crates improve a specific target, environment, or domain.
 
-That means the real Rust ecosystem is not just a mass of general-purpose libraries — it is a highly reliable toolbox built for precise engineering problems.
+That means the real Rust ecosystem is not just a mass of general-purpose libraries. It is a highly reliable toolbox built for precise engineering problems.
 
 This is why Rust is so powerful: it gives you both:
 
@@ -2117,12 +2183,12 @@ If the task is:
 - a service with HTTP and async -> `tokio` + framework crates
 - a CLI with commands -> `clap`
 - JSON data -> `serde` + `serde_json`
-- a firmware target -> `no_std` + embedded crates
+- firmware target -> `no_std` + embedded crates
 - a library with domain logic -> minimal internal logic, few external crates
 - a Windows-specific tool -> `windows` or `windows-sys`
-- a Linux/Unix system tool -> `nix` or `libc`
+- a Linux/Unix tool -> `nix` or `libc`
 - a file-watching or scanning tool -> `walkdir`, `glob`, `notify`
-- a cryptographic tool -> `sha2`, `ring`, `argon2`, `ed25519-dalek`
+- a cryptographic tool -> `ring`, `sha2`, `argon2`, `ed25519-dalek`
 - a browser or WASM app -> `wasm-bindgen`, `web-sys`, `gloo`
 - an embedded or MCU project -> `embedded-hal`, `heapless`, `defmt`
 
