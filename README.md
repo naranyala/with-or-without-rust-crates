@@ -38,18 +38,19 @@ This catalog helps answer that question in a way that is both practical and engi
 - [6. Cargo and dependency management](#6-cargo-and-dependency-management)
 - [7. Decision framework: when to use crates](#7-decision-framework-when-to-use-crates)
 - [8. Decision framework: when not to use crates](#8-decision-framework-when-not-to-use-crates)
-- [9. Crates by category](#9-crates-by-category)
-- [10. Standard library patterns worth knowing](#10-standard-library-patterns-worth-knowing)
-- [11. Cargo workspace patterns](#11-cargo-workspace-patterns)
-- [12. Dependency hygiene](#12-dependency-hygiene)
-- [13. Performance and compile-time reality](#13-performance-and-compile-time-reality)
-- [14. Security and maintenance considerations](#14-security-and-maintenance-considerations)
-- [15. Real-world project archetypes](#15-real-world-project-archetypes)
-- [16. Example code catalog](#16-example-code-catalog)
-- [17. Comparison tables](#17-comparison-tables)
-- [18. Learning roadmap](#18-learning-roadmap)
-- [19. Glossary](#19-glossary)
-- [20. Final recommendation](#20-final-recommendation)
+- [9. Popular Rust crates and no-crate equivalents](#9-popular-rust-crates-and-no-crate-equivalents)
+- [10. Crates by category](#10-crates-by-category)
+- [11. Standard library patterns worth knowing](#11-standard-library-patterns-worth-knowing)
+- [12. Cargo workspace patterns](#12-cargo-workspace-patterns)
+- [13. Dependency hygiene](#13-dependency-hygiene)
+- [14. Performance and compile-time reality](#14-performance-and-compile-time-reality)
+- [15. Security and maintenance considerations](#15-security-and-maintenance-considerations)
+- [16. Real-world project archetypes](#16-real-world-project-archetypes)
+- [17. Example code catalog](#17-example-code-catalog)
+- [18. Comparison tables](#18-comparison-tables)
+- [19. Learning roadmap](#19-learning-roadmap)
+- [20. Glossary](#20-glossary)
+- [21. Final recommendation](#21-final-recommendation)
 
 ---
 
@@ -416,9 +417,263 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 
 ---
 
-## 9. Crates by category
+## 9. Popular Rust crates and no-crate equivalents
 
-### 9.1 CLI and argument parsing
+This section is designed to answer the practical question:
+
+- "What does the crate buy me?"
+- "What does the manual/no-crate option look like?"
+- "When does the hand-written version still win?"
+
+The best Rust decisions are not based on dogma. They are based on trade-offs.
+
+### 9.1 CLI argument parsing
+
+- Crate: `clap`
+- No-crate option: `std::env::args()` and manual parsing
+- What the crate gives you:
+  - subcommands
+  - typed option parsing
+  - validation
+  - help generation
+  - cleaner UX for real CLIs
+- Manual option:
+  - ideal for tiny utilities
+  - better if there are only a few flags or positional args
+- Best choice:
+  - use `clap` for real CLI tools
+  - use manual parsing for scripts and one-off programs
+
+Example manual parsing:
+
+```rust
+use std::env;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("usage: app <name>");
+        return;
+    }
+
+    println!("Hello {}!", args[1]);
+}
+```
+
+### 9.2 JSON handling
+
+- Crate: `serde` + `serde_json`
+- No-crate option: manual parsing with `String`, `split`, and custom structs
+- What the crate gives you:
+  - structured data modeling
+  - strong serialization support
+  - less custom parsing logic
+  - better interoperability with JSON APIs
+- Manual option:
+  - viable for tiny and stable JSON payloads
+  - useful when the format is tightly known and simple
+- Best choice:
+  - use crates for real production JSON
+  - use custom parsing only for constrained or extremely simple data
+
+Example custom parser:
+
+```rust
+fn parse_simple_json_name(input: &str) -> Option<&str> {
+    let marker = "\"name\":\"";
+    input.find(marker).map(|start| {
+        let after = &input[start + marker.len()..];
+        let end = after.find('"').unwrap_or(after.len());
+        &after[..end]
+    })
+}
+```
+
+### 9.3 HTTP client
+
+- Crate: `reqwest`
+- No-crate option: `std::net::TcpStream` plus manual HTTP request formatting
+- What the crate gives you:
+  - request/response abstractions
+  - TLS support
+  - body handling
+  - retries and API ergonomics
+- Manual option:
+  - useful for extremely small custom protocol work
+  - educational or low-level implementations
+- Best choice:
+  - choose `reqwest` for standard HTTP clients
+  - use raw networking only in constrained or custom protocol scenarios
+
+Example in principle:
+
+```rust
+use std::net::TcpStream;
+
+let mut stream = TcpStream::connect("example.com:80").unwrap();
+```
+
+This gives you some control, but it is far more difficult than `reqwest` for real network APIs.
+
+### 9.4 Web server
+
+- Crate: `axum`, `actix-web`, or `rocket`
+- No-crate option: `std::net::TcpListener` + manual request parsing
+- What the crate gives you:
+  - routing
+  - middleware
+  - request/response type handling
+  - ergonomic API design
+- Manual option:
+  - good for educational projects
+  - useful in very constrained systems
+  - okay for tiny protocol servers
+- Best choice:
+  - use a framework for real web services
+  - use manual parsing for minimal custom protocol servers
+
+### 9.5 Async runtime
+
+- Crate: `tokio`
+- No-crate option: `std::thread` and manual scheduling / channels
+- What the crate gives you:
+  - asynchronous tasks
+  - non-blocking I/O
+  - timers, joins, channels, and actor-like patterns
+- Manual option:
+  - enough for a handful of threads
+  - straightforward when the concurrency model is simple
+- Best choice:
+  - use `tokio` for network-heavy or asynchronous workloads
+  - use threads when concurrency is simple and explicit
+
+### 9.6 Logging
+
+- Crate: `tracing` or `env_logger`
+- No-crate option: `println!`, `eprintln!`, or a simple local logger module
+- What the crate gives you:
+  - structured logs
+  - levels and filtering
+  - tracing spans and context
+  - scalable observability
+- Manual option:
+  - sufficient for tiny tools
+  - often easiest for scripts or prototypes
+- Best choice:
+  - use logging crates for production systems
+  - use manual logging for small command-line tools
+
+### 9.7 Error handling
+
+- Crate: `thiserror` or `anyhow`
+- No-crate option: custom `enum` error types and `Result<T, MyError>`
+- What the crate gives you:
+  - ergonomic error conversion
+  - typed domain errors
+  - less boilerplate in production code
+- Manual option:
+  - great for library code where explicit error semantics matter
+  - often cleaner in small projects
+- Best choice:
+  - use `thiserror` or custom errors for libraries and explicit APIs
+  - use `anyhow` for app-level code where ergonomics matter more than strict typing
+
+Example manual error model:
+
+```rust
+#[derive(Debug)]
+enum AppError {
+    Io(std::io::Error),
+    Parse(std::num::ParseIntError),
+}
+```
+
+### 9.8 Configuration parsing
+
+- Crate: `toml` + `serde`
+- No-crate option: read files manually and parse key/value pairs
+- What the crate gives you:
+  - typed config objects
+  - validation
+  - less fragile parsing logic
+- Manual option:
+  - enough for very simple configuration files
+  - good when the format is rigid and tiny
+- Best choice:
+  - use crates for complex configuration
+  - use manual parsing for simple config files or toy projects
+
+### 9.9 Database access
+
+- Crate: `sqlx` or `diesel`
+- No-crate option: direct file storage or a custom serialization layer
+- What the crate gives you:
+  - connection management
+  - query execution
+  - safety and type checking
+  - larger ecosystem integration
+- Manual option:
+  - adequate for simple local file-based storage
+  - often good for embedded, tiny apps, or very controlled data stores
+- Best choice:
+  - use database crates for real database workloads
+  - use custom storage when the data model is simple and storage is local
+
+### 9.10 Binary serialization and compact formats
+
+- Crate: `bincode`
+- No-crate option: manual byte packing and parsing
+- What the crate gives you:
+  - compact binary encoding/decoding
+  - less error-prone implementation
+- Manual option:
+  - useful in tightly controlled, resource-limited systems
+  - common in embedded or custom protocol work
+- Best choice:
+  - choose a crate for normal binary serialization
+  - choose manual binary packing for special low-level or minimal environments
+
+### 9.11 Regex and text processing
+
+- Crate: `regex`
+- No-crate option: manual string scanning, splitting, and matching
+- What the crate gives you:
+  - expressive text matching
+  - better safety and maintainability
+- Manual option:
+  - fine when patterns are simple and local
+  - helps avoid dragging in extra dependencies in tiny tools
+- Best choice:
+  - use `regex` when the text logic is nontrivial
+  - use manual logic for simple and controlled patterns
+
+### 9.12 Timer and scheduling logic
+
+- Crate: `tokio` or `chrono`
+- No-crate option: use `std::time` and loops or threads
+- What the crate gives you:
+  - robust scheduling and time operations
+  - easier async coordination
+- Manual option:
+  - acceptable for simple scripts or small loops
+- Best choice:
+  - use crate-based time and scheduler support for production systems
+  - use `std::time` for simple delay logic
+
+### Summary pattern
+
+The rule is not “crates are always better” or “manual is always better.”
+
+The real rule is:
+
+- choose the crate when the problem is general, shared, stable, and well-solved
+- choose the no-crate version when the problem is small, simple, controlled, or special
+
+---
+
+## 10. Crates by category
+
+### 10.1 CLI and argument parsing
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -426,7 +681,7 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 | `argh` | Attribute-based argument parsing | Simple, annotation-driven CLIs |
 | `dialoguer` | Interactive prompts | Terminal UIs |
 
-### 9.2 Serialization and data formats
+### 10.2 Serialization and data formats
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -436,7 +691,7 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 | `bincode` | Fast binary format | Compact storage or IPC |
 | `ron` | Rust Object Notation | Human-readable Rust-like config |
 
-### 9.3 HTTP, networking, and APIs
+### 10.3 HTTP, networking, and APIs
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -446,7 +701,7 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 | `axum` | Web framework | API backends |
 | `tower` | Service abstraction | Middleware and service composition |
 
-### 9.4 Logging and observability
+### 10.4 Logging and observability
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -454,7 +709,7 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 | `log` | Simple logging facade | Broad ecosystem use |
 | `env_logger` | Simple logger | Quick local setup |
 
-### 9.5 Error handling
+### 10.5 Error handling
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -462,7 +717,7 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 | `anyhow` | Ergonomic error propagation | Application-level code |
 | `eyre` | Rich error reports | Troubleshooting and CLI work |
 
-### 9.6 Database and storage
+### 10.6 Database and storage
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -470,7 +725,7 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 | `diesel` | ORM/query builder | Strongly typed database work |
 | `rusqlite` | SQLite driver | Local relational storage |
 
-### 9.7 Async and concurrency
+### 10.7 Async and concurrency
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -478,7 +733,7 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 | `async-std` | Alternative async runtime | Simpler async apps |
 | `futures` | Futures utilities | Async composition |
 
-### 9.8 Embedded and low-level
+### 10.8 Embedded and low-level
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -487,7 +742,7 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 | `nb` | Non-blocking operations | Embedded I/O flow |
 | `defmt` | Logging in embedded | Microcontroller debugging |
 
-### 9.9 Testing and benchmarking
+### 10.9 Testing and benchmarking
 
 | Crate | Purpose | When to use |
 | --- | --- | --- |
@@ -497,11 +752,11 @@ If a crate only saves a few lines but adds complexity or unnecessary dependencie
 
 ---
 
-## 10. Standard library patterns worth knowing
+## 11. Standard library patterns worth knowing
 
 These patterns are common and useful in Rust without adding external dependencies.
 
-### 10.1 Working with files
+### 11.1 Working with files
 
 ```rust
 use std::fs;
@@ -509,7 +764,7 @@ use std::fs;
 let contents = fs::read_to_string("data.txt")?;
 ```
 
-### 10.2 Command-line arguments
+### 11.2 Command-line arguments
 
 ```rust
 use std::env;
@@ -517,13 +772,13 @@ use std::env;
 let args: Vec<String> = env::args().collect();
 ```
 
-### 10.3 Strings and parsing
+### 11.3 Strings and parsing
 
 ```rust
 let number: i32 = "42".parse().unwrap();
 ```
 
-### 10.4 Collections
+### 11.4 Collections
 
 ```rust
 let mut items = Vec::new();
@@ -534,7 +789,7 @@ let mut map = std::collections::HashMap::new();
 map.insert("a", 1);
 ```
 
-### 10.5 Error handling
+### 11.5 Error handling
 
 ```rust
 fn read_number() -> Result<i32, std::num::ParseIntError> {
@@ -543,7 +798,7 @@ fn read_number() -> Result<i32, std::num::ParseIntError> {
 }
 ```
 
-### 10.6 Custom parsing patterns
+### 11.6 Custom parsing patterns
 
 ```rust
 fn parse_csv_row(line: &str) -> Vec<&str> {
@@ -555,7 +810,7 @@ This is often cleaner than dragging in a parsing dependency when the format is s
 
 ---
 
-## 11. Cargo workspace patterns
+## 12. Cargo workspace patterns
 
 Rust workspaces help organize multi-crate projects.
 
@@ -609,7 +864,7 @@ members = [
 
 ---
 
-## 12. Dependency hygiene
+## 13. Dependency hygiene
 
 Adding crates is not free, even when worthwhile.
 
@@ -640,7 +895,7 @@ Pulling in a huge framework for a tiny internal utility when a few lines of `std
 
 ---
 
-## 13. Performance and compile-time reality
+## 14. Performance and compile-time reality
 
 One of the biggest concerns with crates is compile time.
 
@@ -676,7 +931,7 @@ A crate may offer runtime speed, but the cost of complexity and compile time cou
 
 ---
 
-## 14. Security and maintenance considerations
+## 15. Security and maintenance considerations
 
 Dependency use is partly a security and governance decision.
 
@@ -704,9 +959,9 @@ In production software, dependency health is part of the long-term safety of the
 
 ---
 
-## 15. Real-world project archetypes
+## 16. Real-world project archetypes
 
-### 15.1 Tiny CLI utility
+### 16.1 Tiny CLI utility
 
 Project type:
 
@@ -730,7 +985,7 @@ fn main() {
 }
 ```
 
-### 15.2 REST API service
+### 16.2 REST API service
 
 Project type:
 
@@ -746,7 +1001,7 @@ Recommended approach:
 - `serde` and `serde_json`
 - `sqlx` or `diesel`
 
-### 15.3 Embedded system
+### 16.3 Embedded system
 
 Project type:
 
@@ -762,7 +1017,7 @@ Recommended approach:
 - heapless containers
 - target-specific abstraction crates
 
-### 15.4 Data-processing pipeline
+### 16.4 Data-processing pipeline
 
 Project type:
 
@@ -775,7 +1030,7 @@ Recommended approach:
 - standard library for smaller jobs
 - selected crates for parsing or concurrency when needed
 
-### 15.5 Internal reusable library
+### 16.5 Internal reusable library
 
 Project type:
 
@@ -791,9 +1046,9 @@ Recommended approach:
 
 ---
 
-## 16. Example code catalog
+## 17. Example code catalog
 
-### 16.1 Standard library-only CLI
+### 17.1 Standard library-only CLI
 
 ```rust
 use std::env;
@@ -811,7 +1066,7 @@ fn main() {
 }
 ```
 
-### 16.2 CLI with `clap`
+### 17.2 CLI with `clap`
 
 ```rust
 use clap::Parser;
@@ -829,7 +1084,7 @@ fn main() {
 }
 ```
 
-### 16.3 JSON with `serde`
+### 17.3 JSON with `serde`
 
 ```rust
 use serde::{Serialize, Deserialize};
@@ -847,7 +1102,7 @@ fn main() {
 }
 ```
 
-### 16.4 Async server with `tokio` and `axum`
+### 17.4 Async server with `tokio` and `axum`
 
 ```rust
 use axum::{routing::get, Router};
@@ -864,7 +1119,7 @@ async fn main() {
 }
 ```
 
-### 16.5 Custom parser without external crates
+### 17.5 Custom parser without external crates
 
 ```rust
 fn parse_numbers(input: &str) -> Vec<i32> {
@@ -878,7 +1133,7 @@ fn parse_numbers(input: &str) -> Vec<i32> {
 }
 ```
 
-### 16.6 `no_std` library
+### 17.6 `no_std` library
 
 ```rust
 #![no_std]
@@ -890,9 +1145,9 @@ pub fn square(x: u32) -> u32 {
 
 ---
 
-## 17. Comparison tables
+## 18. Comparison tables
 
-### 17.1 `std` vs external crates
+### 18.1 `std` vs external crates
 
 | Topic | `std`-only approach | External crates |
 | --- | --- | --- |
@@ -903,7 +1158,7 @@ pub fn square(x: u32) -> u32 {
 | Flexibility | Very high | High but layered |
 | Best use | Small tools, simple logic | Common infrastructure and ecosystems |
 
-### 17.2 `std` vs `no_std`
+### 18.2 `std` vs `no_std`
 
 | Topic | `std` | `no_std` |
 | --- | --- | --- |
@@ -913,7 +1168,7 @@ pub fn square(x: u32) -> u32 {
 | Binary size | Larger | Smaller |
 | Runtime assumptions | Normal OS environment | Custom environment |
 
-### 17.3 Crate-first vs custom implementation
+### 18.3 Crate-first vs custom implementation
 
 | Scenario | Prefer crate | Prefer custom implementation |
 | --- | --- | --- |
@@ -926,7 +1181,7 @@ pub fn square(x: u32) -> u32 {
 
 ---
 
-## 18. Learning roadmap
+## 19. Learning roadmap
 
 ### Beginner path
 
@@ -955,7 +1210,7 @@ pub fn square(x: u32) -> u32 {
 
 ---
 
-## 19. Glossary
+## 20. Glossary
 
 - crate: a Rust package or library
 - Cargo: Rust's package manager and build tool
@@ -972,7 +1227,7 @@ pub fn square(x: u32) -> u32 {
 
 ---
 
-## 20. Final recommendation
+## 21. Final recommendation
 
 The strongest Rust engineering practice is not to choose a side dogmatically.
 
