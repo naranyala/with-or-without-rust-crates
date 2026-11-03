@@ -1,1151 +1,346 @@
-# Rust Crates Catalog
+# Rust Dependencies: With or Without Crates?
 
-A practical, opinionated guide to understanding Rust in both directions:
+A practical guide to choosing between Rust's standard library, third-party crates, and `no_std` environments. The goal is not to minimize dependencies at all costs; it is to choose the smallest, clearest, and safest design that meets the project's requirements.
 
-- building with external crates from the Rust ecosystem
-- building without crates at all
-- deciding when each approach is the right tool for the job
+> **In short:** Start with the standard library when it fits. Add a crate when it provides meaningful correctness, capability, maintainability, or development-time benefits. Review the dependency's cost and fit—not just its popularity.
 
-This repository exists to help Rust developers, learners, and teams make thoughtful decisions about dependency use, project architecture, performance, safety, security, and maintainability.
+## Contents
 
-## Why this repo exists
+- [A quick decision guide](#a-quick-decision-guide)
+- [What `std`, crates, and `no_std` mean](#what-std-crates-and-no_std-mean)
+- [Evaluating a dependency](#evaluating-a-dependency)
+- [Cargo essentials](#cargo-essentials)
+- [Examples: standard library and crates](#examples-standard-library-and-crates)
+- [Common mismatches](#common-mismatches)
+- [Project patterns](#project-patterns)
+- [Curated crate map](#curated-crate-map)
+- [Security and cryptography](#security-and-cryptography)
+- [Further reading](#further-reading)
 
-Rust is a language of clarity, safety, and control. It has an excellent standard library, a rich ecosystem of reusable libraries, and a culture of building small, explicit, correct systems.
+## A quick decision guide
 
-The central question is not:
-
-- "Should I always use crates?"
-- "Should I avoid crates entirely?"
-
-The real question is:
-
-- "What is the smallest and best design for this project?"
-
-This project helps answer that question in a practical, engineering-minded way.
-
----
-
-## Quick decision matrix
-
-| Situation | Best default | Why |
+| Need | Reasonable starting point | Things to consider |
 | --- | --- | --- |
-| Tiny script or utility | `std` | Minimal, explicit, no dependency cost |
-| CLI app with options | `clap` | Strong UX and validation |
-| JSON API payloads | `serde` + `serde_json` | Standard, safe, productive |
-| HTTP client | `reqwest` | Ergonomic and widely adopted |
-| Async service | `tokio` + web framework | Mature async ecosystem |
-| Embedded firmware | `no_std` + `embedded-hal` | Thin runtime, low-level control |
-| Local config file | `std` or `toml` | Depends on complexity |
-| Database app | `sqlx` or `diesel` | Strong typing and safety |
-| Custom binary protocol | `nom` or manual parser | Domain-specific complexity |
-| WASM or browser interop | `wasm-bindgen` + `web-sys` | Browser-specific integration |
-| Platform integration | `windows`, `nix`, `directories`, `which` | OS-specific access and ergonomics |
+| Small one-off utility | `std` | Manual argument handling is fine while it stays simple. Add a CLI crate as options, help, or validation grow. |
+| User-facing CLI | [`clap`](https://crates.io/crates/clap) or [`argh`](https://crates.io/crates/argh) | Shell completion, help text, validation, and compatibility may justify a dependency. |
+| JSON | [`serde`](https://crates.io/crates/serde) + [`serde_json`](https://crates.io/crates/serde_json) | Prefer established parsers and serializers over hand-written JSON handling. |
+| HTTP client | [`reqwest`](https://crates.io/crates/reqwest) | Check TLS, async/blocking needs, enabled features, and target support. |
+| Async network service | [`tokio`](https://crates.io/crates/tokio) plus a framework such as [`axum`](https://crates.io/crates/axum) | Async is useful for I/O concurrency; it is not automatically faster for CPU-bound work. |
+| Embedded or bare metal | `core`, possibly `alloc`, and ecosystem crates | Confirm target support, runtime, allocator, and hardware requirements. `no_std` is not a synonym for “no dependencies.” |
+| Configuration | `std` for a tiny private format; [`toml`](https://crates.io/crates/toml) or another parser for a real format | Parsing a standard format correctly is usually worth using a parser. |
+| Database | [`sqlx`](https://crates.io/crates/sqlx), [`diesel`](https://crates.io/crates/diesel), or [`rusqlite`](https://crates.io/crates/rusqlite) | Compare async needs, compile-time checks, migrations, backend support, and operational model. |
+| CSV | [`csv`](https://crates.io/crates/csv) | CSV has quoting and escaping rules; splitting on commas is only valid for a deliberately restricted format. |
+| Binary protocol or grammar | A documented parser crate such as [`nom`](https://crates.io/crates/nom), [`winnow`](https://crates.io/crates/winnow), or a small local parser | Follow the actual grammar, handle malformed input, and test boundaries. |
+| Platform APIs | Platform-specific crates such as [`windows`](https://crates.io/crates/windows), [`nix`](https://crates.io/crates/nix), or [`libc`](https://crates.io/crates/libc) | Isolate platform-specific code and test on the supported targets. |
+| Browser WebAssembly | [`wasm-bindgen`](https://crates.io/crates/wasm-bindgen) and [`web-sys`](https://crates.io/crates/web-sys) | Browser APIs, target support, and generated bindings shape the design. |
 
----
+These are starting points, not prescriptions. A crate's maintenance status and capabilities can change; check its current documentation and release history before adopting it.
 
-## Core idea
+## What `std`, crates, and `no_std` mean
 
-Use the standard library first. Use crates when they solve a real, recurring, mature problem. Avoid crates when the task is small, specific, or easier to express locally.
+### The standard library
 
-The best Rust project is not the one with the most crates. It is the one with the smallest honest abstraction that matches the task.
+Rust's standard library (`std`) provides common facilities such as collections, filesystem and process APIs, networking primitives, synchronization, and I/O. It is often enough for small tools and domain-specific logic.
 
----
+Start with `std` when the implementation is short, easy to test, and clearly correct. Reconsider that choice when custom code begins duplicating a mature format, protocol, platform abstraction, or widely used capability.
 
-## 1. Rust in one sentence
+### Third-party crates
 
-Rust is a systems programming language designed to give you memory safety, explicit control, and performance without sacrificing correctness.
+A crate is a Rust compilation and distribution unit. Cargo packages often provide one or more crates. A dependency can bring useful functionality, but also brings APIs to learn, versions to resolve, features to configure, and code to build, maintain, and audit.
 
-It works well for:
-
-- command-line tools
-- backend services
-- data processing
-- embedded systems
-- networking
-- game engines
-- kernel, firmware, and low-level work
-
----
-
-## 2. `std` vs crates vs `no_std`
-
-### Standard library only
-
-Best when:
-
-- the problem is small and local
-- the logic is domain-specific and clear
-- the project is a tiny CLI or utility
-- there is no strong need for networking, parsing, or async runtime support
-
-Examples:
-
-- file reading and writing
-- local transformation scripts
-- custom algorithms
-- simple CLI tools
-
-### Crates
-
-Best when:
-
-- the problem is common and already solved well
-- the API is well-known and stable
-- the crate reduces boilerplate without hiding too much logic
-- the crate is mature and maintained
-
-Examples:
-
-- `clap` for CLI parsing
-- `serde` + `serde_json` for data handling
-- `tokio` for async execution
-- `reqwest` for HTTP
-- `tracing` for structured logs
+A good dependency should improve the overall design—not merely reduce line count. “No dependencies” is not inherently safer: a hand-written parser or cryptographic routine can be much riskier than a well-maintained, well-matched library.
 
 ### `no_std`
 
-Best when:
+`#![no_std]` opts a crate out of the Rust standard library. The crate can still use `core`; it may use `alloc` if the final program supplies an allocator. `no_std` libraries can be used in larger `std` programs, and many crates support both environments.
 
-- the environment is constrained or embedded
-- the standard library is not available
-- the runtime assumptions are custom
-- the project targets bare metal or microcontrollers
-
-Examples:
-
-- firmware
-- drivers
-- bootloaders
-- tiny embedded libraries
-
----
-
-## 3. Why the decision matters
-
-Crates can speed development, but they also add:
-
-- compile-time cost
-- dependency graph complexity
-- maintenance risk
-- semver compatibility concerns
-- hidden behavior behind abstractions
-
-Manual code can be very clean, but it may mean:
-
-- more code to maintain
-- duplicated logic
-- slower delivery for common tasks
-- more custom validation
-
-The best project is usually the one that stays understandable and maintainable.
-
----
-
-## 4. Standard library patterns worth knowing
-
-### Files and arguments
+A `no_std` executable also needs target-specific startup/runtime and panic behavior; bare-metal projects commonly use a board support package or runtime crate. The small example below is a **library snippet**, not a complete firmware image.
 
 ```rust
-use std::env;
-use std::fs;
+#![no_std]
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("usage: app <path>");
-        std::process::exit(1);
-    }
-
-    let content = fs::read_to_string(&args[1]).expect("failed to read file");
-    println!("Read {} bytes", content.len());
+pub fn checked_add(a: u32, b: u32) -> Option<u32> {
+    a.checked_add(b)
 }
 ```
 
-### String parsing
+## Evaluating a dependency
 
-```rust
-let number: i32 = "42".parse().unwrap();
-```
+Before adding a crate, ask:
 
-### Custom parser example
+1. **Fit:** Does it solve the actual problem and support the platforms and Rust versions we need?
+2. **Correctness:** Does it correctly handle edge cases, invalid input, and failure? Is the alternative realistically as reliable?
+3. **Maintenance:** Are releases, documentation, issue responses, and security advisories appropriate for this project's risk?
+4. **Cost:** What are the compile-time, binary-size, runtime, licensing, and transitive-dependency costs?
+5. **Features:** Can optional features be limited? Does the default feature set enable capabilities we do not need?
+6. **API commitment:** Is this an internal implementation detail or a public API choice that users will depend on?
+7. **Alternatives:** Is there a standard-library facility, a smaller crate, or a more suitable established solution?
 
-```rust
-fn parse_csv_row(line: &str) -> Vec<&str> {
-    line.split(',').collect()
-}
-```
+Do not use download counts or repository activity as the sole measure of quality. Consider the project's threat model and maintenance capacity. For critical dependencies, record why the dependency is needed and what would trigger replacing or updating it.
 
-This is often cleaner than adding a parsing crate for a small, domain-specific format.
+### Dependency hygiene
 
----
+- Add only direct dependencies that the project uses; avoid dependency duplication when one crate already fits.
+- Enable only needed features where practical, and inspect feature unification across the dependency graph.
+- Review licenses and supported targets, especially for products distributed to others.
+- Commit `Cargo.lock` for applications and binaries so collaborators and CI resolve the same dependency versions. Libraries commonly omit it so downstream users can resolve compatible versions themselves; workspace policy may vary.
+- A lockfile improves consistency of dependency resolution, but does not by itself make builds reproducible across different toolchains, operating systems, or external inputs.
+- Review dependency changes in pull requests. Consider tools such as `cargo tree`, `cargo audit`, and `cargo deny` as part of an appropriate project workflow; they complement, rather than replace, review.
+- Keep Rust and dependencies updated deliberately. Review the changelog and test the change instead of assuming every update is behavior-free.
 
-## 5. Cargo ecosystem
+## Cargo essentials
 
-Rust uses Cargo for dependency management and builds.
+Create a binary project and run common checks:
 
-### Common commands
-
-```bash
-cargo new my_project
-cargo build
-cargo run
-cargo test
+```sh
+cargo new my_app
+cd my_app
 cargo check
-cargo fmt
-cargo clippy
-cargo update
+cargo test
+cargo fmt --check
+cargo clippy --all-targets
+cargo run
 ```
 
-### `Cargo.toml` basics
+`cargo check` checks code without producing a final executable; it is not a substitute for tests or a release build. `cargo fmt --check` checks formatting without changing files. `cargo clippy` reports lints; review suggestions in context.
+
+For dependency inspection and updates:
+
+```sh
+cargo tree
+cargo tree -e features
+cargo update --dry-run
+```
+
+`cargo update` updates the lockfile within the version requirements in `Cargo.toml`; it does not generally rewrite those requirements. Review and test lockfile changes before committing them.
+
+### Minimal manifest example
+
+Versions and features below are illustrative. Select versions that fit your MSRV and project, and verify feature requirements in each crate's documentation.
 
 ```toml
 [package]
-name = "my_project"
+name = "my_app"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-reqwest = "0.12"
+serde_json = "1"
 
 [dev-dependencies]
 pretty_assertions = "1"
 ```
 
-### Key concepts
+- `[dependencies]` are available to the package's normal targets.
+- `[dev-dependencies]` are for tests, examples, and benchmarks as applicable.
+- Features select optional crate functionality; Cargo may unify features for the same dependency across the graph.
+- A workspace groups related packages and can share dependency declarations and build settings.
+- `rust-version` declares the minimum supported Rust version (MSRV) when the project has one; verify that dependencies and features respect it.
 
-- normal dependencies: used by the program
-- dev-dependencies: used only in tests or tooling
-- features: optional functionality inside a crate
-- workspaces: multi-crate projects managed together
-- Cargo.lock: reproducible dependency resolution
+## Examples: standard library and crates
 
----
-
-## 6. When to use crates
-
-Use a crate when the problem is:
-
-- common
-- shared across many projects
-- stable and well-understood
-- difficult to implement correctly by hand
-- already solved by the Rust ecosystem
-
-### Good reasons to use crates
-
-- JSON parsing: `serde`, `serde_json`
-- CLI parsing: `clap`
-- HTTP: `reqwest`
-- async runtime: `tokio`
-- database access: `sqlx`, `diesel`
-- structured logging: `tracing`
-- error propagation: `anyhow`, `thiserror`
-
-### Example: JSON handling
+### Reading a file with useful error context
 
 ```rust
-use serde::{Serialize, Deserialize};
+use std::{env, error::Error, fs};
 
-#[derive(Serialize, Deserialize, Debug)]
+fn run() -> Result<(), Box<dyn Error>> {
+    let path = env::args().nth(1).ok_or("usage: app <path>")?;
+    let contents = fs::read_to_string(&path)?;
+    println!("Read {} bytes from {path}", contents.len());
+    Ok(())
+}
+
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
+}
+```
+
+This is enough for a small example. For a production CLI, decide how errors should be reported and whether a CLI or error-handling crate would improve usability.
+
+### Parsing a simple delimited format
+
+For a format that is explicitly defined as comma-separated integers with no quoting or escaping, a small parser can be appropriate:
+
+```rust
+fn parse_numbers(input: &str) -> Result<Vec<i32>, std::num::ParseIntError> {
+    input
+        .split(',')
+        .map(|field| field.trim().parse())
+        .collect()
+}
+```
+
+This rejects invalid fields instead of silently dropping them. It is **not a general CSV parser**: real CSV supports quoting, escaped quotes, and other rules. Use the `csv` crate for general CSV input.
+
+### JSON with Serde
+
+Add `serde` with its `derive` feature and `serde_json` to the manifest, then define the data shape:
+
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
 struct User {
     name: String,
     age: u32,
 }
-```
 
-This is much easier and safer than writing a custom serializer by hand.
-
----
-
-## 7. When not to use crates
-
-Avoid external crates when:
-
-- the logic is tiny and custom
-- the requirement is narrow and easy to implement directly
-- you want full, explicit control
-- the target environment is minimal or embedded
-- the dependency graph would exceed the value of the abstraction
-- you are teaching, prototyping, or experimenting
-
-### Rule of thumb
-
-If a crate only saves a few lines but adds complexity or unnecessary dependencies, keep it local.
-
----
-
-## 8. `no_std` and minimal Rust
-
-`no_std` tells Rust not to use the standard library. Instead, it relies on `core` and may use `alloc` when available.
-
-### Typical use cases
-
-- embedded software
-- bare-metal targets
-- firmware
-- bootloaders
-- kernel-like code
-- tiny runtime environments
-
-### Example
-
-```rust
-#![no_std]
-
-pub fn add(a: u32, b: u32) -> u32 {
-    a + b
+fn main() -> Result<(), serde_json::Error> {
+    let input = r#"{"name":"Ada","age":37}"#;
+    let user: User = serde_json::from_str(input)?;
+    println!("{user:?}");
+    Ok(())
 }
 ```
 
-### Why it matters
+Serde and a format crate handle serialization mechanics; application code still needs to validate domain rules, such as age ranges or authorization.
 
-In constrained systems, the standard library may be unavailable or too heavy. Rust still gives you useful lower-level abstractions in those environments.
+### CLI parsing with `clap`
 
----
+Add `clap` with its `derive` feature:
 
-## 9. Cargo workspace patterns
-
-Rust workspaces let you manage multiple crates as one project.
-
-### Single-crate project
-
-```text
-my_app/
-├── Cargo.toml
-├── src/
-│   └── main.rs
-└── README.md
+```toml
+clap = { version = "4", features = ["derive"] }
 ```
-
-### Multi-crate workspace
-
-```text
-workspace/
-├── Cargo.toml
-├── crates/
-│   ├── app/
-│   ├── core/
-│   ├── api/
-│   └── cli/
-└── README.md
-```
-
-### Principles
-
-- separate app code from domain logic
-- keep shared logic in a core crate
-- avoid monolithic binaries unless the project justifies them
-
----
-
-## 10. Dependency hygiene
-
-Good dependency hygiene means:
-
-- prefer the minimum number of dependencies
-- prefer small targeted crates over giant frameworks
-- only enable the features you need
-- audit transitive dependencies
-- prefer maintained crates with active maintainers
-- avoid crates that are over-engineered for your task
-
-### Red flags
-
-- a crate solves a problem you barely need
-- it pulls in many unrelated dependencies
-- it has poor or sparse documentation
-- it is poorly maintained or inactive
-- it adds a large abstraction layer for a small task
-
----
-
-## 11. Rust crate families to know
-
-This repo keeps the important ecosystem buckets, without assuming every project needs all of them.
-
-### CLI and argument parsing
-
-- `clap`
-- `argh`
-- `dialoguer`
-
-### Serialization and data formats
-
-- `serde`
-- `serde_json`
-- `toml`
-- `bincode`
-- `ron`
-- `csv`
-
-### HTTP, networking, and APIs
-
-- `reqwest`
-- `hyper`
-- `tokio`
-- `axum`
-- `tower`
-- `rustls`
-- `quinn`
-- `tokio-tungstenite`
-
-### Logging and observability
-
-- `tracing`
-- `log`
-- `env_logger`
-- `colored`
-- `indicatif`
-
-### Error handling
-
-- `thiserror`
-- `anyhow`
-- `eyre`
-
-### Database and storage
-
-- `sqlx`
-- `diesel`
-- `rusqlite`
-
-### Async and concurrency
-
-- `tokio`
-- `async-std`
-- `futures`
-- `rayon`
-- `crossbeam`
-
-### Embedded and low-level
-
-- `embedded-hal`
-- `heapless`
-- `nb`
-- `defmt`
-- `cortex-m`
-
-### Testing and benchmarking
-
-- `criterion`
-- `proptest`
-- `insta`
-- `pretty_assertions`
-
-### Cryptography and security
-
-- `ring`
-- `sha2`
-- `blake3`
-- `aes-gcm`
-- `argon2`
-- `ed25519-dalek`
-
-### Platform-specific and system integration
-
-- `windows`
-- `windows-sys`
-- `nix`
-- `libc`
-- `which`
-- `directories`
-- `signal-hook`
-- `walkdir`
-- `glob`
-- `notify`
-- `tempfile`
-
-### Browser and WASM
-
-- `wasm-bindgen`
-- `web-sys`
-- `js-sys`
-- `gloo`
-- `console_error_panic_hook`
-
-### GUI and desktop
-
-- `egui`
-- `iced`
-- `tauri`
-- `slint`
-
----
-
-## 12. Common anti-patterns and wrong crate usage
-
-This is one of the most important sections of the project: the crates that are technically usable, but are a poor fit for the task or the architecture.
-
-### 12.1 The main trap
-
-A dependency is not automatically a win just because it reduces boilerplate.
-
-The real question is not:
-
-- "Can I use this crate?"
-
-It is:
-
-- "Does this crate improve the design, or simply hide the design?"
-
-### 12.2 Using async everywhere
-
-`tokio` is excellent for real async I/O and networked services.
-
-It is a poor fit for:
-
-- short-lived CLI tools
-- mostly synchronous data processing scripts
-- tiny utilities that do not need non-blocking I/O
-
-Wrong pattern:
-
-```rust
-#[tokio::main]
-async fn main() {
-    // a tiny script that just reads a file and exits
-}
-```
-
-This adds async runtime complexity without real benefit.
-
-### 12.3 Using `anyhow` too broadly
-
-`anyhow` is excellent for app-level code and CLI tooling.
-
-It is often a poor choice for:
-
-- public libraries
-- domain APIs
-- reusable abstractions
-- code that should expose precise error types
-
-Wrong pattern:
-
-```rust
-fn parse_user() -> anyhow::Result<User> {
-    // hides precise domain error semantics behind a generic error type
-}
-```
-
-This is ergonomic, but it loses information and weakens correctness signals.
-
-### 12.4 Using `clap` for tiny utilities
-
-`clap` is great for real CLIs.
-
-It is overkill for:
-
-- scripts with two flags
-- internal tools with a handful of positional args
-- quick prototypes
-
-Wrong pattern:
-
-- "I used `clap` because it is the default"
-- "It is popular, so it must be correct for this case"
-
-If the project is tiny, `std::env::args()` and a few manual checks may be clearer.
-
-### 12.5 Using `serde` for trivial fixed formats
-
-`serde` is one of the best crates in Rust.
-
-But it is not always the right answer when:
-
-- the file format is tiny and rigid
-- the format is simple enough to parse with `split` or a few direct checks
-- the schema is fixed and does not need a general data model
-
-Wrong pattern:
-
-- reading a tiny config file with a large `serde` struct graph when a few simple `String` splits are enough
-- forcing a structured data model onto a custom format that is not actually complex
-
-### 12.6 Using a web framework for a trivial tool
-
-Frameworks like `axum`, `actix-web`, and `rocket` are excellent for APIs.
-
-They are a poor fit when:
-
-- a project is really a CLI utility
-- there is only one endpoint and the code is not a full web product
-- the app does not need routing, middleware, request typing, or web ergonomics
-
-Wrong pattern:
-
-- building a tiny service with an application framework before proving the workload is genuinely web-heavy
-
-### 12.7 Choosing a crate just because it is famous
-
-Popular crates are not automatically correct choices.
-
-Wrong pattern:
-
-- "Everyone uses `X`, so I should use it too"
-- "This crate has a million downloads, so it must be the right abstraction"
-
-A dependency should match the actual architecture and workload, not just the popularity list.
-
-### 12.8 Misleading ergonomics
-
-Some crates are ergonomic in the short-term but create long-term confusion.
-
-Examples:
-
-- `anyhow` in a library API
-- `tokio` in a mostly sequential tool
-- `serde` applied to a format that does not benefit from structured modeling
-- `axum` in a project that only does a single task and exits
-
-The danger is not broken code. The danger is code that works but is harder to reason about than the original problem.
-
-### 12.9 Maintenance and dependency hygiene problems
-
-A bad dependency decision often looks like this:
-
-- a crate solves a tiny problem but brings a big graph
-- a crate is not actively maintained
-- the dependency relies on many transitive libraries for a narrow task
-- the project is now more expensive to build, audit, and understand than the original problem
-
-Look out for:
-
-- large transitive trees
-- sparse or unclear documentation
-- stale issue history
-- a mismatch between "library power" and project size
-
-### 12.10 Better rule of thumb
-
-Use a dependency when it:
-
-- matches the real problem
-- keeps the code clearer instead of more abstract
-- is easy to maintain and understand
-- adds real leverage for the project
-
-Avoid it when it:
-
-- is more clever than necessary
-- brings too much abstraction for a small task
-- makes the code harder to reason about
-- encourages architecture by trend instead of fit
-
----
-
-## 13. Project archetypes
-
-Rust is not one-size-fits-all. The right tool depends on the kind of project you are building.
-
-### 13.1 Tiny CLI utility
-
-Project type:
-
-- reads a file
-- transforms data
-- prints output
-
-Typical choice:
-
-- `std` first
-- small custom logic
-- maybe a tiny helper crate like `clap` if the CLI grows
-
-Example:
-
-```rust
-use std::fs;
-
-fn main() {
-    let content = fs::read_to_string("input.txt").unwrap();
-    println!("{}", content.trim());
-}
-```
-
-### 13.2 REST API service
-
-Project type:
-
-- HTTP endpoints
-- JSON request/response
-- database access
-- async processing
-
-Typical choice:
-
-- `axum` or `actix-web`
-- `tokio`
-- `serde` + `serde_json`
-- `sqlx` or `diesel`
-- `tracing`
-
-This is where the ecosystem really shines.
-
-### 13.3 Embedded system
-
-Project type:
-
-- microcontroller
-- firmware
-- sensor hardware
-- bare metal or custom runtime
-
-Typical choice:
-
-- `no_std`
-- `embedded-hal`
-- `heapless`
-- `defmt`
-- target-specific abstractions
-
-This is one of the strongest reasons to avoid the default “just add a crate” mindset.
-
-### 13.4 Data-processing pipeline
-
-Project type:
-
-- CSV or log processing
-- local ETL jobs
-- file ingestion
-- transform-and-emit workloads
-
-Typical choice:
-
-- `std` for smaller jobs
-- selected crates for parsing, concurrency, or structured output
-- `csv`, `serde`, and `regex` when useful
-
-### 13.5 Internal reusable library
-
-Project type:
-
-- domain logic
-- shared algorithms
-- service semantics
-- cross-project business rules
-
-Typical choice:
-
-- small dependency footprint
-- carefully designed public API
-- prefer local implementation over a broad framework
-
-### 13.6 Tooling and developer workflow projects
-
-Project type:
-
-- file scanning and watching
-- code generation
-- build helpers
-- command wrappers
-
-Typical choice:
-
-- `which`
-- `walkdir`
-- `glob`
-- `notify`
-- `tempfile`
-- `directories`
-- `colored`
-- `indicatif`
-
-### 13.7 GUI or desktop applications
-
-Project type:
-
-- local desktop UI
-- hybrid web/native app
-- TUI or interactive terminal app
-
-Typical choice:
-
-- `egui`
-- `iced`
-- `tauri`
-- `slint`
-- `crossterm`
-- `termion`
-
-### 13.8 Browser and WebAssembly apps
-
-Project type:
-
-- browser-side Rust logic
-- interactive frontend logic
-- web interop with JavaScript
-
-Typical choice:
-
-- `wasm-bindgen`
-- `web-sys`
-- `js-sys`
-- `gloo`
-
-### 13.9 Cryptographic or security-critical work
-
-Project type:
-
-- hashing
-- signatures
-- password storage
-- payload encryption
-
-Typical choice:
-
-- `ring`
-- `sha2`
-- `blake3`
-- `aes-gcm`
-- `argon2`
-- `ed25519-dalek`
-
----
-
-## 14. Practical crate examples
-
-### 14.1 CLI with `clap`
 
 ```rust
 use clap::Parser;
 
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
+#[command(version, about = "Greets a person")]
 struct Args {
+    /// Name to greet
     #[arg(long)]
     name: String,
 }
 
 fn main() {
     let args = Args::parse();
-    println!("Hello {}!", args.name);
+    println!("Hello, {}!", args.name);
 }
 ```
 
-### 14.2 JSON with `serde`
+For a tiny private utility, `std::env::args` may be simpler. For a distributed CLI, generated help, validation, and consistent behavior can make `clap` worthwhile.
 
-```rust
-use serde::{Serialize, Deserialize};
+### Minimal async HTTP server
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Person {
-    name: String,
-    age: u32,
-}
+This example uses `axum` 0.8 and Tokio. Add compatible versions of both crates; Tokio needs the macros, networking, and runtime features used by the example.
+
+```toml
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 ```
-
-### 14.3 Async server with `tokio` and `axum`
 
 ```rust
 use axum::{routing::get, Router};
+use std::error::Error;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
     let app = Router::new().route("/", get(|| async { "hello" }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
-        .await
-        .unwrap();
-
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+    axum::serve(listener, app).await?;
+    Ok(())
 }
 ```
 
-### 14.4 Embedded example with `no_std`
+This binds to loopback for local demonstration. A production service also needs deliberate decisions about configuration, graceful shutdown, observability, timeouts, resource limits, and deployment security.
 
-```rust
-#![no_std]
+## Common mismatches
 
-pub fn square(x: u32) -> u32 {
-    x * x
-}
-```
+These are trade-offs, not universal prohibitions. Reassess when requirements change.
 
-### 14.5 Custom parser without external crates
+### Using async without an I/O-concurrency need
 
-```rust
-fn parse_numbers(input: &str) -> Vec<i32> {
-    input
-        .split(',')
-        .filter_map(|token| token.trim().parse().ok())
-        .collect()
-}
-```
+Tokio is useful for async I/O and services with many concurrent operations. A synchronous file transformation or short script may be clearer without an async runtime. Async is not a general CPU-performance optimization; CPU-bound work usually needs a different strategy.
 
----
+### Using `anyhow` as a public library's error contract
 
-## 15. Intuitive and life-saver crates
+`anyhow` is convenient at application boundaries. A reusable library often benefits from a concrete error type so callers can distinguish and handle documented failure cases. This is a design choice, not a rule: consider the audience and stability of the API.
 
-“Intuitive” and “life-saver” crates are not absolute labels, but in practice they are the crates that make Rust feel ergonomic, less error-prone, and much easier to ship safely.
+### Hand-parsing a standard format
 
-### 15.1 Intuitive crates
+A few `split` calls can be right for a tiny private format with a precisely limited grammar. They are not substitutes for complete CSV, JSON, URL, or protocol parsers. If input can be malformed or adversarial, correctness and resource limits matter.
 
-Examples:
+### Choosing a framework before understanding the problem
 
-- `serde`
-- `clap`
-- `reqwest`
-- `chrono`
-- `uuid`
-- `tracing`
-- `anyhow`
-- `thiserror`
+A web framework is appropriate for a web application that benefits from routing, middleware, and request/response abstractions. It is usually unnecessary for a command-line tool that does not serve HTTP. Conversely, hand-building a production HTTP stack to avoid dependencies is rarely a good trade.
 
-Why they matter:
+### Choosing based on popularity alone
 
-- they follow Rust idioms closely
-- common operations feel natural and explicit
-- they reduce boilerplate without sacrificing safety or control
+A popular crate can still be the wrong fit, and a small crate can be excellent. Evaluate current maintenance, compatibility, security posture, license, feature set, and your ability to support it.
 
-### 15.2 Life-saver crates
+### Treating fewer dependencies as automatically safer
 
-Examples:
+Fewer dependencies can reduce maintenance and review work. But custom replacements for mature parsers, TLS, cryptography, or database drivers can introduce substantially more risk. Compare total risk, not dependency count alone.
 
-- `thiserror`
-- `anyhow`
-- `eyre`
-- `serde`
-- `serde_json`
-- `toml`
-- `regex`
-- `clap`
-- `reqwest`
-- `tokio`
-- `tracing`
-- `sqlx`
-- `diesel`
-- `proptest`
-- `criterion`
+## Project patterns
 
-Why they matter:
+### Small CLI or local utility
 
-- they reduce runtime errors
-- they replace brittle hand-written logic
-- they give clearer failure modes
-- they improve maintainability
-- they create better debugging visibility in production systems
+Start with `std` for a simple argument, file, and output flow. Add `clap`, `serde`, `csv`, or another focused crate when requirements justify them. Make errors actionable rather than relying on `unwrap()` for ordinary external input.
 
-### 15.3 Strong practical shortlist
+### Service or API
 
-If I had to pick the most important categories of “intuitive and/or life-saver” crates, I’d rank them like this:
+A common combination is a runtime such as Tokio, a framework such as Axum, Serde for data formats, and a database library if needed. Keep domain logic independent of transport where practical; choose timeouts, cancellation, input validation, and observability deliberately.
 
-- `serde` / `serde_json`
-- `thiserror` / `anyhow`
-- `clap`
-- `tokio`
-- `tracing`
-- `reqwest`
-- `sqlx` / `diesel`
-- `chrono`
-- `uuid`
-- `regex`
-- `proptest`
-- `criterion`
+### Embedded or bare-metal application
 
----
+Check the target triple, runtime, allocator, panic strategy, hardware support, and `no_std` compatibility of every dependency. Use abstractions that help test hardware-facing logic, and keep target-specific code at clear boundaries.
 
-## 16. Scoped and platform-specific crates
+### Data pipeline
 
-There is a third class of crates that matters enormously in real Rust work:
+Use `std` for straightforward file and stream work. Prefer format-aware crates for CSV, JSON, compressed data, or other established formats. Measure before adding parallelism; it may add complexity without improving the actual bottleneck.
 
-- domain-specific crates
-- platform-specific crates
-- highly scoped crates that solve one narrow problem extremely well
+### Reusable library
 
-### 16.1 OS and system integration crates
+Keep the public API intentional and avoid exposing implementation details unnecessarily. Consider whether dependencies appear in public types, their impact on downstream MSRV and feature selection, and whether callers need typed errors.
 
-- `windows`
-- `windows-sys`
-- `nix`
-- `libc`
-- `which`
-- `directories`
-- `signal-hook`
-- `walkdir`
-- `glob`
-- `notify`
-- `tempfile`
+### Desktop, terminal, and browser apps
 
-### 16.2 Data parsing and format-specific crates
+Choose UI frameworks according to target, accessibility, distribution, and ecosystem needs. Desktop GUI, terminal UI, and browser WebAssembly are distinct environments; a crate suited to one is not automatically suited to another.
 
-- `nom`
-- `pest`
-- `lalrpop`
-- `csv`
-- `serde_yaml`
-- `quick-xml`
+## Curated crate map
 
-### 16.3 Cryptography and security crates
+This is a discovery list, not an endorsement, ranking, or claim that all projects need these crates. Check current crate documentation, maintenance, licensing, platform support, and security advisories before adopting one.
 
-- `ring`
-- `sha2`
-- `blake3`
-- `aes-gcm`
-- `argon2`
-- `ed25519-dalek`
+| Area | Examples |
+| --- | --- |
+| CLI and prompts | [`clap`](https://crates.io/crates/clap), [`argh`](https://crates.io/crates/argh), [`dialoguer`](https://crates.io/crates/dialoguer) |
+| Serialization and formats | [`serde`](https://crates.io/crates/serde), [`serde_json`](https://crates.io/crates/serde_json), [`toml`](https://crates.io/crates/toml), [`csv`](https://crates.io/crates/csv), [`bincode`](https://crates.io/crates/bincode), [`quick-xml`](https://crates.io/crates/quick-xml) |
+| HTTP and networking | [`reqwest`](https://crates.io/crates/reqwest), [`hyper`](https://crates.io/crates/hyper), [`axum`](https://crates.io/crates/axum), [`tower`](https://crates.io/crates/tower), [`rustls`](https://crates.io/crates/rustls), [`quinn`](https://crates.io/crates/quinn), [`tokio-tungstenite`](https://crates.io/crates/tokio-tungstenite) |
+| Async and concurrency | [`tokio`](https://crates.io/crates/tokio), [`futures`](https://crates.io/crates/futures), [`rayon`](https://crates.io/crates/rayon), [`crossbeam`](https://crates.io/crates/crossbeam) |
+| Logging and diagnostics | [`tracing`](https://crates.io/crates/tracing), [`log`](https://crates.io/crates/log), [`env_logger`](https://crates.io/crates/env_logger), [`indicatif`](https://crates.io/crates/indicatif) |
+| Errors | [`thiserror`](https://crates.io/crates/thiserror), [`anyhow`](https://crates.io/crates/anyhow), [`eyre`](https://crates.io/crates/eyre) |
+| Databases | [`sqlx`](https://crates.io/crates/sqlx), [`diesel`](https://crates.io/crates/diesel), [`rusqlite`](https://crates.io/crates/rusqlite) |
+| Parsing and grammars | [`nom`](https://crates.io/crates/nom), [`winnow`](https://crates.io/crates/winnow), [`pest`](https://crates.io/crates/pest), [`lalrpop`](https://crates.io/crates/lalrpop), [`regex`](https://crates.io/crates/regex) |
+| Testing and benchmarks | [`proptest`](https://crates.io/crates/proptest), [`insta`](https://crates.io/crates/insta), [`criterion`](https://crates.io/crates/criterion), [`tempfile`](https://crates.io/crates/tempfile) |
+| Cryptography | [`ring`](https://crates.io/crates/ring), [`sha2`](https://crates.io/crates/sha2), [`blake3`](https://crates.io/crates/blake3), [`aes-gcm`](https://crates.io/crates/aes-gcm), [`argon2`](https://crates.io/crates/argon2), [`ed25519-dalek`](https://crates.io/crates/ed25519-dalek) |
+| Embedded | [`embedded-hal`](https://crates.io/crates/embedded-hal), [`heapless`](https://crates.io/crates/heapless), [`defmt`](https://crates.io/crates/defmt), [`cortex-m`](https://crates.io/crates/cortex-m) |
+| Operating systems and files | [`windows`](https://crates.io/crates/windows), [`windows-sys`](https://crates.io/crates/windows-sys), [`nix`](https://crates.io/crates/nix), [`libc`](https://crates.io/crates/libc), [`directories`](https://crates.io/crates/directories), [`walkdir`](https://crates.io/crates/walkdir), [`notify`](https://crates.io/crates/notify) |
+| Browser and WebAssembly | [`wasm-bindgen`](https://crates.io/crates/wasm-bindgen), [`web-sys`](https://crates.io/crates/web-sys), [`js-sys`](https://crates.io/crates/js-sys), [`gloo`](https://crates.io/crates/gloo) |
+| GUI and terminal UI | [`egui`](https://crates.io/crates/egui), [`iced`](https://crates.io/crates/iced), [`tauri`](https://crates.io/crates/tauri), [`slint`](https://crates.io/crates/slint), [`crossterm`](https://crates.io/crates/crossterm) |
 
-### 16.4 Embedded and hardware crates
+## Security and cryptography
 
-- `embedded-hal`
-- `heapless`
-- `nb`
-- `defmt`
-- `cortex-m`
+Cryptographic primitives are not interchangeable. A fast general-purpose hash such as SHA-256 or BLAKE3 is not a password-hashing function. Password storage needs a password-hashing scheme such as Argon2 with appropriate parameters and salts. Encryption, authentication, key management, and signatures have different requirements.
 
-### 16.5 Browser and WebAssembly crates
+Prefer a maintained, high-level library or protocol implementation that fits the use case. Do not design a cryptographic protocol or combine primitives based only on short examples. Keep secrets out of logs, validate inputs, use secure defaults, and seek expert review for security-critical systems. A crate can provide useful building blocks; it does not make an application secure by itself.
 
-- `wasm-bindgen`
-- `web-sys`
-- `js-sys`
-- `gloo`
-- `console_error_panic_hook`
+## Further reading
 
-### 16.6 General rule for scoped crates
-
-A crate in this category is worth it if all of the following are true:
-
-- the problem is narrow but real
-- the crate solves it much better than custom code
-- the crate is mature and maintained
-- the problem is common enough that reimplementation would be expensive or error-prone
+- [The Rust Book](https://doc.rust-lang.org/book/)
+- [The Rust Standard Library](https://doc.rust-lang.org/std/)
+- [The Cargo Book](https://doc.rust-lang.org/cargo/)
+- [Rust Embedded Book](https://rust-embedded.org/book/)
+- [RustSec Advisory Database](https://rustsec.org/)
 
 ---
 
-## 17. Performance and compile-time reality
-
-One of the biggest concerns with crates is compile time.
-
-Large dependency graphs can mean:
-
-- longer build times
-- slower CI pipelines
-- more time for every change
-- harder repros in constrained environments
-
-### A good balance
-
-- use `cargo check` for fast feedback
-- build full binaries only when needed
-- prefer focused dependencies
-- keep your project separate from huge ecosystems when unnecessary
-
-### Performance is not just runtime speed
-
-In Rust, performance also includes:
-
-- compile time
-- cognitive load
-- maintainability
-- dependency churn
-- team velocity
-
----
-
-## 18. Security and maintenance considerations
-
-Dependency use is partly a security and governance decision.
-
-### Security checklist
-
-- prefer crates with active maintenance
-- review direct and transitive dependencies
-- check release history and compatibility
-- prefer stable, widely used crates where possible
-- be cautious with heavy, unmaintained libraries
-
-### Maintenance signals
-
-Look for:
-
-- recent releases
-- active issue resolution
-- responsive maintainers
-- clear documentation
-- healthy community adoption
-
----
-
-## 19. Learning roadmap
-
-### Beginner path
-
-1. Learn variables, ownership, borrowing, and lifetimes.
-2. Write a few programs with `std` only.
-3. Master `Result`, `Option`, and basic error handling.
-4. Learn `cargo build`, `cargo run`, and `cargo test`.
-5. Add one or two crates intentionally, such as `clap` or `serde`.
-6. Learn how `Cargo.toml` and feature flags work.
-
-### Intermediate path
-
-1. Understand workspaces and library layouts.
-2. Learn async with `tokio`.
-3. Build a small API server with `axum`.
-4. Use structured logging and tracing.
-5. Learn dependency hygiene and crate auditing.
-
-### Advanced path
-
-1. Work with `no_std` and embedded targets.
-2. Build reusable libraries with careful API design.
-3. Keep compile times under control.
-4. Design long-lived error and data models.
-5. Understand semver, maintenance, and ecosystem maturity.
-
-### Recommended crate progression
-
-Start with:
-
-- `clap`
-- `serde`
-- `serde_json`
-- `thiserror`
-- `anyhow`
-
-Then move to:
-
-- `tokio`
-- `reqwest`
-- `tracing`
-- `axum`
-- `sqlx`
-- `diesel`
-
-Then, when needed:
-
-- `windows` / `nix` / `directories`
-- `embedded-hal` / `heapless` / `defmt`
-- `wasm-bindgen` / `web-sys`
-- `ring` / `sha2` / `argon2`
-
----
-
-## 20. Final guidance
-
-Use the standard library first. Use crates when they solve a real, recurring, mature problem. Avoid crates when the task is small, specific, or easier to express locally.
-
-In practical terms:
-
-- tiny scripts -> `std`
-- a real CLI -> `clap`
-- JSON or config -> `serde` + `serde_json` / `toml`
-- HTTP client -> `reqwest`
-- async service -> `tokio` + framework crates
-- embedded target -> `no_std` + hardware crates
-- browser interop -> `wasm-bindgen` + `web-sys`
-- system integration -> `windows`, `nix`, `directories`, `which`
-- cryptography -> `ring`, `sha2`, `argon2`, `ed25519-dalek`
-
----
-
-## 21. Closing statement
-
-Rust is at its best when you combine:
-
-- local, explicit code
-- a minimal and honest dependency graph
-- carefully chosen crates only where they buy real leverage
-
-That is the real Rust philosophy: not more dependencies, but the right dependencies at the right time.
-
-This repository is intended as a practical catalog and reference for Rust decisions. The goal is to help developers understand the trade-offs between writing direct Rust code, leaning on the standard library, and depending on crates where the ecosystem genuinely improves safety, ergonomics, or maintainability.
+This guide is intentionally opinionated, but every recommendation depends on the project's requirements, threat model, supported platforms, and maintenance capacity. Revisit dependency choices as those constraints change.
